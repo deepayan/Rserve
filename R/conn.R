@@ -1,3 +1,12 @@
+debug_message <- function(...)
+{
+    cat("[", as.character(Sys.time()), "] ", file = "~/rserve-log.txt", append = TRUE)
+    cat(..., file = "~/rserve-log.txt", append = TRUE, fill = TRUE)
+}
+
+
+
+
 Rserve <- function(debug=FALSE, port, args=NULL, quote=(length(args) > 1), wait, ...) {
   args <- as.character(args)
   if (!isTRUE(quote) && length(args) > 1) args <- paste(args, collapse=' ')
@@ -59,12 +68,14 @@ self.ctrlSource <- function(file) {
 self.oobSend <- function(what, code = 0L) {
   if (!is.loaded("Rserve_oobSend")) stop("This command can only be run inside Rserve with oob enabled")
   call <- getNativeSymbolInfo("Rserve_oobSend")
+  debug_message("self.oobSend: names(call) = ", paste(names(call), collapse = " / "))
   invisible(.Call(call, what, code))
 }
 
 self.oobMessage <- function(what, code = 0L) {
   if (!is.loaded("Rserve_oobMsg")) stop("This command can only be run inside Rserve with oob enabled")
   call <- getNativeSymbolInfo("Rserve_oobMsg")
+  debug_message("self.oobMessage: names(call) = ", paste(names(call), collapse = " / "))
   invisible(.Call(call, what, code))
 }
 
@@ -77,8 +88,11 @@ ocap <- function(fun, name=deparse(substitute(fun)))
   .Call(Rserve_set_last_condition, cond)
 
 Rserve.eval <- function(what, where=.GlobalEnv, last.value=FALSE, exp.value=FALSE,
-	    context=NULL, handlers=list(error=.save.condition))
+                        context=NULL, handlers=list(error=.save.condition))
+{
+    debug_message("Rserve.eval: what = ", paste(as.character(what), collapse = " / "))
     .Call(Rserve_eval, what, where, last.value, exp.value, context, handlers)
+}
 
 Rserve.context <- function(what)
     if (missing(what)) .Call(Rserve_get_context) else .Call(Rserve_set_context, what)

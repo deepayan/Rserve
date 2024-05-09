@@ -490,13 +490,25 @@ static int last_idle_time;
 /* FIXME: self.* commands can be loaded either from Rserve.so or from stand-alone binary.
    This will cause a mess since some things are private and some are not - we have to sort that out.
    In the meantime a quick hack is to make the relevant config (here enable_oob) global */
-int enable_oob = 0;
+ int enable_oob = 0;
 args_t *self_args;
 /* object to send with the idle call; it could be used for notification etc. */
  SEXP idle_object;
 
 int compute_subprocess = 0;
 
+
+
+int write_debug_message(char *s) {
+	char *DBG_FILE = sprintf("%s/rserve-log.txt", "/c/Users/Deepayan Sarkar");
+	FILE *out = fopen(DBG_FILE, "a");
+	fprintf(out, s);
+	fclose(out);
+	return 0;
+}
+
+
+ 
 static int send_oob_sexp(int cmd, SEXP exp);
 
 /* stdout/err re-direction feeder FD (or 0 if not used) */
@@ -2004,6 +2016,7 @@ static char dump_buf[32768]; /* scratch buffer that is static so mem alloc doesn
 
 static int send_oob_sexp(int cmd, SEXP exp) {
 	int send_res = -1;
+	write_debug_message("reached send_oob_sexp()\n");
 	if (!self_args) Rf_error("OOB commands can only be used from code evaluated inside an Rserve client instance");
 	if (!enable_oob) Rf_error("OOB command is disallowed by the current Rserve configuration - use 'oob enable' to allow its use");
 	PROTECT(exp);
@@ -2057,6 +2070,7 @@ static int send_oob_sexp(int cmd, SEXP exp) {
 #ifdef OOB_ULOG
 			ulog("OOB sent (cmd=0x%x, %d bytes, result=%d)", cmd, tail-sendhead, send_res);
 #endif
+			write_debug_message("--> OOB sent\n");
 			free(sendbuf);
 		}
 	}
