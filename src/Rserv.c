@@ -503,7 +503,7 @@ int write_debug_message(char *s) {
 	FILE *out;
 	char DBG_FILE[1024];
 	sprintf(DBG_FILE, "%s/rserve-log.txt", "/c/Users/Deepayan Sarkar");
-	FILE *out = fopen(DBG_FILE, "a");
+	out = fopen(DBG_FILE, "a");
 	fprintf(out, s);
 	fclose(out);
 	return 0;
