@@ -5027,7 +5027,6 @@ static void handle_server_event(void *which) {
 	socklen_t al;
 	struct args *sa;
 	int ss = srv->ss;
-	int succ = 0;
 	sa = (struct args*)malloc(sizeof(struct args));
 	memset(sa, 0, sizeof(struct args));
 	al = sizeof(sa->sa);
