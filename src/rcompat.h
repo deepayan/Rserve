@@ -43,7 +43,9 @@
 #ifdef Rf_findVar
 #undef Rf_findVar
 #endif
-#define Rf_findVar(X, Y) R_getVar(X, Y, TRUE)
+/* NOTE: technically the original behavior was using R_UnboundValue, but
+   that is no longer API and we re-map it (in oc.c) to R_NilValue anyway */
+#define Rf_findVar(X, Y) R_getVarEx(Y, X, TRUE, R_NilValue)
 #ifndef findVar
 #define findVar Rf_findVar
 #endif
@@ -51,7 +53,7 @@
 #ifdef Rf_findVarInFrame
 #undef Rf_findVarInFrame
 #endif
-#define Rf_findVarInFrame(X, Y) R_getVar(X, Y, FALSE)
+#define Rf_findVarInFrame(X, Y) R_getVarEx(Y, X, FALSE, R_NilValue)
 #ifndef findVarInFrame
 #define findVarInFrame Rf_findVarInFrame
 #endif
