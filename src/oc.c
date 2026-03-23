@@ -23,7 +23,9 @@ SEXP oc_resolve(const char *ref) {
     SEXP val;
     if (!oc_env) return R_NilValue;
     val = findVarInFrame(oc_env, install(ref));
+#if R_VERSION < R_Version(2,5,0)
     if (val == R_UnboundValue) val = R_NilValue;
+#endif
     return val;
 }
 
