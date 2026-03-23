@@ -7,6 +7,10 @@ NOTE: Rserve 1.8 series has many new features, but it has also removed
       whether they may be resurrected for the 1.9 series. If you don't
       know what it means, just ignore this note.
 
+1.8-19	2026-03-24
+    o	Fix regression in 1.8-18 which broke obtaining OCAP symbols.
+
+
 1.8-18	2026-03-20
     o	One more round of API updates for R 4.6.0
 
