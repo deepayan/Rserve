@@ -359,15 +359,25 @@ static void WS_connected(void *parg) {
 
 	/* textual protocol */
 	if (h.protocol && strstr(h.protocol, "text")) {
+		/* save WS frame buffers: Rserve_text_connected frees arg but not buf/sbuf */
+		char *ws_buf = arg->buf, *ws_sbuf = arg->sbuf;
 		free_header(&h);
 		Rserve_text_connected(arg);
+		free(ws_buf);
+		free(ws_sbuf);
 		return;
 	}
 
 	free_header(&h);
 
 	/* switch to underlying QAP1 */
+
+	/* save WS frame buffers: Rserve_QAP1_connected frees arg but not buf/sbuf */
+	char *ws_buf = arg->buf, *ws_sbuf = arg->sbuf;
 	Rserve_QAP1_connected(arg);
+	/* arg is freed inside QAP1_connected; only the WS buffers remain to free */
+	free(ws_buf);
+	free(ws_sbuf);
 }
 
 static server_t *ws_upgrade_srv, *wss_upgrade_srv; /* virtual server that represents the WS layer in HTTP/WS stack */

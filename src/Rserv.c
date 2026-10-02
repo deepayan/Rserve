@@ -312,6 +312,12 @@ static int tls_port = -1;
 static int active = 1; /* 1 = server loop is active, 0 = shutdown */
 static int UCIX   = 1; /* unique connection index */
 
+/* Forward declarations: defined near add_server/rm_server below.
+   Referenced early by cio_recv for new-connection preemption. */
+#define MAX_SERVERS 128
+static int servers;
+static server_t *server[MAX_SERVERS];
+
 static char *localSocketName = 0; /* if set listen on this local (unix) socket instead of TCP/IP */
 static int localSocketMode = 0;   /* if set, chmod is used on the socket when created */
 
@@ -556,6 +562,22 @@ ssize_t cio_recv(int s, void *buffer, size_t length, int flags) {
 				xfd = std_fw_fd;
 			FD_SET(std_fw_fd, &readfds);
 		}
+#ifndef FORKED
+		/* In COOPERATIVE (non-forked) mode we are single-threaded, so a new
+		   incoming connection cannot be accepted until the current one finishes.
+		   To avoid the second browser tab hanging indefinitely, we watch the
+		   server listen sockets inside this recv loop.  When a new connection
+		   is ready, we return 0 (simulating peer EOF) so the current command
+		   loop exits cleanly and serverLoop can accept() the new connection. */
+		{
+			int i;
+			for (i = 0; i < servers; i++)
+				if (server[i] && server[i]->ss >= 0) {
+					if (server[i]->ss > xfd) xfd = server[i]->ss;
+					FD_SET(server[i]->ss, &readfds);
+				}
+		}
+#endif
 		n = select(xfd + 1, &readfds, 0, 0, &timv);
 		if (n == -1) {
 			if (errno == EINTR)
@@ -568,6 +590,22 @@ ssize_t cio_recv(int s, void *buffer, size_t length, int flags) {
 				handle_std_fw();
 				continue;
 			}
+#ifndef FORKED
+			/* check if a new connection arrived on a listen socket */
+			{
+				int i;
+				for (i = 0; i < servers; i++)
+					if (server[i] && server[i]->ss >= 0 &&
+					    FD_ISSET(server[i]->ss, &readfds)) {
+						/* New connection is waiting.  Return 0 to simulate
+						   EOF on the current connection so the command loop
+						   exits and serverLoop can accept() it. */
+						ulog("INFO: new connection pending on server %d, "
+						     "closing current connection to serve it", i);
+						return 0;
+					}
+			}
+#endif
 			/* we only land here if FD_ISSET(s, ) is true so no need to check */
 			return recv(s, buffer, length, flags);
 		}
@@ -588,6 +626,7 @@ ssize_t cio_recv(int s, void *buffer, size_t length, int flags) {
 	}
 	return -1;
 }
+
 
 /* this is only used on standalone mode */
 #ifdef STANDALONE_RSERVE
@@ -2801,10 +2840,15 @@ static void free_qap_runtime(qap_runtime_t *rt) {
 		if (rt->args) {
 			free(rt->args);
 			rt->args = 0;
+			/* self_args pointed to rt->args; null it to prevent
+			   dangling dereference from cio_recv() on next connection */
+			self_args = NULL;
 		}
 		if (rt == current_runtime)
 			current_runtime = 0;
 		free(rt);
+		/* oob_allowed must be re-negotiated per connection */
+		oob_allowed = 0;
 	}
 }
 
@@ -3893,6 +3937,31 @@ int OCAP_iteration(qap_runtime_t *rt, struct phdr *oob_hdr) {
 	return 0;
 }
 
+/* Reset global per-connection state after a connection closes.
+   In FORKED mode the child process exits so no reset is needed.
+   In non-forked (COOPERATIVE) mode the same process handles all
+   connections sequentially, so stale globals from one connection
+   will corrupt the next one if not cleared here.
+
+   Critical bugs this prevents:
+     - self_args dangling pointer: after free(a), self_args still points to
+       the freed struct; cio_recv() dereferences self_args if oob_allowed==1.
+     - oob_allowed staying 1: enables the self_args dereference path on the
+       very next recv() call of the second connection's WS handshake.
+     - std_fw_fd staying non-zero: stale (possibly reused/closed) fd added
+       to select() readfds set during the second connection.
+*/
+#ifndef FORKED
+static void reset_connection_globals(void) {
+	self_args   = NULL;  /* was freed by caller; prevent dangling dereference */
+	oob_allowed = 0;     /* must be re-negotiated per connection */
+	std_fw_fd   = 0;     /* fd is closed/gone; don't select() on it */
+	csock       = -1;    /* socket is closed; mark invalid */
+}
+#else
+static void reset_connection_globals(void) { /* no-op in forked mode */ }
+#endif
+
 /* working thread/function. the parameter is of the type struct args* */
 /* This server function implements the Rserve QAP1 protocol */
 void Rserve_QAP1_connected(void *thp) {
@@ -3946,6 +4015,7 @@ void Rserve_QAP1_connected(void *thp) {
     if (!buf || !sfbuf) {
 		RSEprintf("FATAL: cannot allocate initial buffers. closing client connection.\n");
 		s = a->s;
+		reset_connection_globals();
 		free(a);
 		closesocket(s);
 		return;
@@ -3970,6 +4040,7 @@ void Rserve_QAP1_connected(void *thp) {
 		if (check_tls_client(verify_peer_tls(a, cn, 256), cn)) {
 			s = a->s;
 			close_tls(a);
+			reset_connection_globals();
 			free(a);
 			closesocket(s);
 			return;
@@ -4061,6 +4132,7 @@ void Rserve_QAP1_connected(void *thp) {
 			free(sfbuf);
 			if (uses_tls) close_tls(a);
 			closesocket(s);
+			reset_connection_globals();
 			free(a);
 			return;
 		}
@@ -4098,6 +4170,7 @@ void Rserve_QAP1_connected(void *thp) {
 						free(sendbuf); free(sfbuf);
 						if (uses_tls) close_tls(a);
 						closesocket(s);
+						reset_connection_globals();
 						free(a);
 						return;
 					}	    
@@ -4228,6 +4301,7 @@ void Rserve_QAP1_connected(void *thp) {
 				free(sendbuf); free(sfbuf);
 				if (uses_tls) close_tls(a);
 				closesocket(s);				
+				reset_connection_globals();
 				free(a);
 				return;
 			}
@@ -4281,6 +4355,7 @@ void Rserve_QAP1_connected(void *thp) {
 						if (uses_tls) close_tls(a);
 						closesocket(s);
 						free(sendbuf); free(sfbuf); free(buf);
+						reset_connection_globals();
 						free(a);
 						return;
 					}
@@ -4378,6 +4453,7 @@ void Rserve_QAP1_connected(void *thp) {
 			if (uses_tls) close_tls(a);
 			closesocket(s);
 			free(sendbuf); free(sfbuf); free(buf);
+			reset_connection_globals();
 			free(a);
 			return;
 		}
@@ -4396,6 +4472,7 @@ void Rserve_QAP1_connected(void *thp) {
 			if (uses_tls) close_tls(a);
 			closesocket(s);
 			free(sendbuf); free(sfbuf); free(buf);
+			reset_connection_globals();
 			free(a);
 #ifdef FORKED
 			if (parentPID > 0)
@@ -4452,6 +4529,7 @@ void Rserve_QAP1_connected(void *thp) {
 						free(buf); free(sfbuf);
 						if (uses_tls) close_tls(a);
 						closesocket(s);
+						reset_connection_globals();
 						free(a);
 						return;
 					}
@@ -4841,6 +4919,7 @@ void Rserve_QAP1_connected(void *thp) {
 									free(buf); free(sfbuf);
 									if (uses_tls) close_tls(a);
 									closesocket(s);
+									reset_connection_globals();
 									free(a);
 									return;
 								} else {
@@ -4887,6 +4966,7 @@ void Rserve_QAP1_connected(void *thp) {
 										free(buf); free(sfbuf);
 										if (uses_tls) close_tls(a);
 										closesocket(s);
+										reset_connection_globals();
 										free(a);
 										return;		    
 							}
@@ -4920,6 +5000,7 @@ void Rserve_QAP1_connected(void *thp) {
 	if (uses_tls) close_tls(a);
     closesocket(s);
     free(sendbuf); free(sfbuf); free(buf);
+	reset_connection_globals(); /* clear self_args/oob_allowed/std_fw_fd before next connection */
 	free(a);
 	ulog("INFO: closed connection");
 
@@ -4970,9 +5051,6 @@ static void restore_signal_handlers(void) {
 }
 #endif
 
-#define MAX_SERVERS 128
-static int servers;
-static server_t *server[MAX_SERVERS];
 
 int add_server(server_t *srv) {
 	if (!srv) return 0;
